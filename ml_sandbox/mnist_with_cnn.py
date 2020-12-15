@@ -48,25 +48,22 @@ class Lambda(nn.Module):
         return self.func(x)
 
 
-class Mnist_Logistic(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(16, 16, kernel_size=3, stride=2, padding=1)
-        self.conv3 = nn.Conv2d(16, 10, kernel_size=3, stride=2, padding=1)
-
-    def forward(self, xb):
-        xb = xb.view(-1, 1, 28, 28)
-        xb = F.relu(self.conv1(xb))
-        xb = F.relu(self.conv2(xb))
-        xb = F.relu(self.conv3(xb))
-        xb = F.avg_pool2d(xb, 4)
-        xb = xb.view(-1, xb.size(1))
-        return xb
+def preprocess(x, y):
+    return x.view(-1, 1, 28, 28), y
 
 
-def preprocess(x):
-    return x.view(-1, 1, 28, 28)
+class WrappedDataLoader:
+    def __init__(self, dl, func):
+        self.dl = dl
+        self.func = func
+
+    def __len__(self):
+        return len(self.dl)
+
+    def __iter__(self):
+        batches = iter(self.dl)
+        for b in batches:
+            yield (self.func(*b))
 
 
 def loss_batch(model, loss_func, xb, yb, opt=None):
@@ -105,7 +102,7 @@ m = 28 * 28
 
 lr = 0.5
 
-epochs = 5
+epochs = 1
 bs = 64
 
 
@@ -113,13 +110,26 @@ loss_func = F.cross_entropy
 
 
 def get_model():
-    model = Mnist_Logistic()
+    model = nn.Sequential(
+        nn.Conv2d(1, 16, kernel_size=3, stride=2, padding=1),
+        nn.ReLU(),
+        nn.Conv2d(16, 16, kernel_size=3, stride=2, padding=1),
+        nn.ReLU(),
+        nn.Conv2d(16, 10, kernel_size=3, stride=2, padding=1),
+        nn.ReLU(),
+        nn.AdaptiveAvgPool2d(1),
+        Lambda(lambda x: x.view(x.size(0), -1)),
+    )
+
     model.to(device)
     return model, optim.SGD(model.parameters(), lr=lr)
 
 
 def get_data(train_ds, valid_ds, bs):
-    return (DataLoader(train_ds, bs, shuffle=True), DataLoader(valid_ds, bs * 2))
+    return (
+        WrappedDataLoader(DataLoader(train_ds, bs, shuffle=True), preprocess),
+        WrappedDataLoader(DataLoader(valid_ds, bs * 2), preprocess),
+    )
 
 
 def accuracy(out, yb):
@@ -131,4 +141,5 @@ train_dl, valid_dl = get_data(train_ds, valid_ds, bs)
 model, opt = get_model()
 fit(epochs, model, loss_func, opt, train_dl, valid_dl)
 
+x_valid, y_valid = preprocess(x_valid, y_valid)
 print(accuracy(model(x_valid), y_valid))
